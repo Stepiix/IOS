@@ -1,0 +1,233 @@
+#!/bin/bash
+
+export POSIXLY_CORRECT=yes
+export LC_ALL=C
+
+#Function for help
+print_help()
+{
+    echo "Usage: corona [-h] [FILTERS] [COMMAND] [LOG [LOG2 [...]]"
+    echo ""
+    echo "One of the COMMANDS can be:"
+    echo ""
+    echo "  infected    -counts the number of infected"
+    echo "  merge       -merges several files with records into one, preserving the original order (the header will be output only once)"
+    echo "  gender      -lists the number of infected for each sex"
+    echo "  age         -lists statistics on the number of infected people by age"
+    echo "  daily       -lists statistics of infected persons for individual days"
+    echo "  monthly     -lists statistics of infected persons for individual months"
+    echo "  yearly      -lists statistics on infected people for each year"
+    echo "  countries   -lists statistics of infected persons for individual countries of the disease (excluding the Czech Republic, ie the CZ code)"
+    echo "  districts   -lists statistics on infected persons for individual districts"
+    echo "  regions     -lists statistics of infected persons for individual regions"
+    echo ""
+    echo "FILTERS can be a combination of the following (each at most once)"
+    echo ""
+    echo "  -a DATETIME -after: only records AFTER this date (including this date) are considered"
+    echo "  -b DATETIME -before: only records BEFORE this date (including this date) are considered"
+    echo "  -g GENDER   -only records of infected people of a given gender are considered. GENDER can be M (men) or Z (women)"
+    echo "  -s [WIDTH]  -for gender, age, daily, monthly, yearly, countries, districts, and regions commands lists data not numerically but graphically in the form of histograms" 
+    echo                "The optional parameter WIDTH sets the width of the histograms, ie the length of the longest line, to WIDTH" 
+    echo                "Thus, WIDTH must be a positive integer. If the WIDTH parameter is not specified, the line widths follow the requirements below"
+}
+
+error()
+{
+  echo BAD ARGUMENTS  
+}
+
+NONE=""
+COMMAND=""
+ADATETIME=""
+BDATETIME=""
+WIDTH=""
+LOG_FILES=""
+WIDTHCHECK=""
+GENDER=""
+SNUMBER=""
+
+# Process parameters
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+    infected|merge|gender|age|daily|monthly|yearly|countries|districts|regions)
+    COMMAND="$1"
+    shift
+    ;;
+    -h)
+    print_help
+    exit 0
+    ;;
+    -a)
+    ADATETIME="$2"
+    shift
+    shift
+    ;;
+    -b)
+    BDATETIME="$2"
+    shift
+    shift
+    ;;
+    -g)
+    if [ "$2" = "M" ] || [ "$2" = "Z" ]; then
+      GENDER="$2"
+    else
+      error
+      exit 1
+    fi
+    shift
+    shift
+    ;;
+    -s)
+    if [[ "$2" =~ ^[0-9]+$ ]]; then
+      if [ "$2" -gt 0 ]; then
+        WIDTH="$2"
+        shift
+        shift
+      else
+        echo "$2" is negative integer
+        error
+        exit 1
+      fi
+    else
+      WIDTHCHECK="1"
+      shift
+    fi
+    WIDTHCHECK="1"
+    ;;
+    *.csv)
+    if [ -z "$LOG_FILES" ]; then
+      LOG_FILES=$(cat "$1")
+    else
+      LOG_FILES=$(echo "$LOG_FILES" && cat "$1")
+    fi
+    shift
+    ;;
+    *.gz)
+    if [ -z "$LOG_FILES" ]; then
+      LOG_FILES=$(gzip -d -c "$1")
+    else
+      LOG_FILES=$(echo "$LOG_FILES" && gzip -d -c "$1")
+    fi
+    shift
+    ;;
+    *.bz2)
+    if [ -z "$LOG_FILES" ]; then
+      LOG_FILES=$(bzip2 -d -c "$1")
+    else
+      LOG_FILES=$(echo "$LOG_FILES" && bzip2 -d -c "$1")
+    fi
+    shift
+    ;;
+    esac
+done
+
+# Filters
+
+if [ -z "$LOG_FILES" ]
+then
+  LOG_FILES=$(cat)
+fi
+
+if [ -n "$ADATETIME" ]
+then
+  LOG_FILES=$(echo "$LOG_FILES" | awk -F, -v date="$ADATETIME" ' $2 >= date { print $0 }')
+fi
+
+if [ -n "$BDATETIME" ]
+then
+  LOG_FILES=$(echo "$LOG_FILES" | awk -F, -v date="$BDATETIME" '$2 <= date { print $0 }')
+fi
+
+if [ -n "$GENDER" ]
+then
+  LOG_FILES=$(echo "$LOG_FILES" | awk -F, -v gender="$GENDER" 'NR==1{print $0} $4 ~ gender')
+fi
+
+# Commands
+
+case "$COMMAND" in
+infected)
+OUTPUT=$(echo "$LOG_FILES" | awk '$1 ~ /id/ {next} {y++} /^[[:space:]]*$/{++x} END{print y-x}')
+;;
+merge)
+OUTPUT=$(echo "$LOG_FILES" | awk '{print}')
+;;
+gender)
+OUTPUT=$(echo "$LOG_FILES" | awk -F, '$1 ~ /id/ {next} {A[$4]+=1} {B[$4]+=1} END{print "M: " A["M"]"\n""Z: "B["Z"]}')
+NONE=$(echo "$LOG_FILES" | awk -F, 'NR == 1{next} { if ($4 ~ /^$/)count++} END{if(count == 0); else{print "None: "count}}')
+SNUMBER=100000
+;;
+age)
+OUTPUT=$(echo "$LOG_FILES" | awk -F, -vOFS=, '$1 ~ /id/ {next}  $3 ~ /^$/ {next}
+                {
+                  if ($3 >= 0 && $3 < 6) $3="0-5   ";
+                  else if ($3 >= 6 && $3 < 16) $3="6-15  ";
+                  else if ($3 >= 16 && $3 < 26) $3="16-25 ";
+                  else if ($3 >= 26 && $3 < 36) $3="26-35 ";
+                  else if ($3 >= 36 && $3 < 46) $3="36-45 ";
+                  else if ($3 >= 46 && $3 < 56) $3="46-55 ";
+                  else if ($3 >= 56 && $3 < 66) $3="56-65 ";
+                  else if ($3 >= 66 && $3 < 76) $3="66-75 ";
+                  else if ($3 >= 76 && $3 < 86) $3="76-85 ";
+                  else if ($3 >= 86 && $3 < 96) $3="86-95 ";
+                  else if ($3 >= 96 && $3 < 106) $3="96-105";
+                  else if  ($3 >= 106) $3=">105  "; 
+                
+                
+                }
+                {a[$3]++;} END{for(i in a) print i": " a[i]}' | sort -V)
+NONE=$(echo "$LOG_FILES" | awk -F, 'NR == 1{next} { if ($3 ~ /^$/)count++} END{if(count == 0); else{print "None  : "count}}')
+SNUMBER=10000
+;;
+daily)
+OUTPUT=$(echo "$LOG_FILES" | awk -F, -vOFS=, '$1 ~ /id/ {next}  $2 ~ /^$/ {next} {a[$2]++;} END{for(i in a) print i": " a[i]}' | sort -V)
+NONE=$(echo "$LOG_FILES" | awk -F, 'NR == 1{next} { if ($2 ~ /^$/)count++} END{if(count == 0); else{print "None: "count}}')
+SNUMBER=500
+;;
+monthly)
+OUTPUT=$(echo "$LOG_FILES" | awk -F, -vOFS=, '$1 ~ /id/ {next} {$2=substr($2,1,7)} $2 ~ /^$/ {next} {a[$2]++;} END{for(i in a) print i": " a[i]}' | sort -V)
+NONE=$(echo "$LOG_FILES" | awk -F, 'NR == 1{next} { if ($2 ~ /^$/)count++} END{if(count == 0); else{print "None: "count}}')
+SNUMBER=10000
+;;
+yearly)
+OUTPUT=$(echo "$LOG_FILES" | awk -F, -vOFS=, '$1 ~ /id/ {next} {$2=substr($2,1,4)} $2 ~ /^$/ {next} {a[$2]++;} END{for(i in a) print i": " a[i]}')
+NONE=$(echo "$LOG_FILES" | awk -F, 'NR == 1{next} { if ($2 ~ /^$/)count++} END{if(count == 0); else{print "None: "count}}')
+SNUMBER=100000
+;;
+countries)
+OUTPUT=$(echo "$LOG_FILES" | awk -F,  '$1 ~ /id/ {next} $8 ~ /^$/ {next} $8 ~ /CZ/ {next} {a[$8]++;} END{for(i in a) print i": " a[i]}' | sort)
+SNUMBER=100
+;;
+districts)
+OUTPUT=$(echo "$LOG_FILES" | awk -F,  '$1 ~ /id/ {next} $6 ~ /^$/ {next} {a[$6]++;} END{for(i in a) print i": " a[i]}' | sort)
+NONE=$(echo "$LOG_FILES" | awk -F,  'NR == 1{next} {if($6 ~ /^$/)count++} END{if(count == 0); else{print "None: "count}}')
+SNUMBER=1000
+;;
+regions)
+OUTPUT=$(echo "$LOG_FILES" | awk -F,  ' $5 ~ /^$/ {next} $1 ~ /id/ {next} {a[$5]++;} END{for(i in a) print i": " a[i]}' | sort)
+NONE=$(echo "$LOG_FILES" | awk -F,  ' NR == 1{next} {if($5 ~ /^$/)count++} END{if(count == 0); else{print "None: "count}}')
+SNUMBER=10000
+;;
+*)
+    OUTPUT=$(echo "$LOG_FILES" | awk '{print}')
+;;
+esac
+
+#Histogram and print Output
+
+if [ -z $WIDTHCHECK ]; then
+  echo "$OUTPUT" | awk '{print}'
+elif [ -z "$WIDTH" ]; then
+  echo "$OUTPUT" | awk -F ':' -v number=$SNUMBER '{$2=sprintf("%"$2/number"s", ""); gsub(" ", "#", $2); printf("%s: %s\n", $1, $2)}'
+else 
+MAX=$(echo "$OUTPUT" | awk -F ':' -v width="$WIDTH" 'BEGIN{a=   0}{if ($2>0+a) a=$2} END{print a}')
+MAX=$((MAX / WIDTH))
+echo "$OUTPUT" | awk -F ':' -vmax="$MAX" '{$2=sprintf("%"$2/max"s", ""); gsub(" ", "#", $2); printf("%s: %s\n", $1, $2)}'
+fi
+if [ -z $WIDTHCHECK ]; then
+if [ -n "$NONE" ]
+then
+  echo "$NONE"
+fi
+fi
